@@ -25,8 +25,7 @@ App(
 
 App(
     appid="cli_js",
-    # BLE Full compact builds omit the firmware-resident MJS runtime.
-    targets=[],
+    targets=["f7"],
     apptype=FlipperAppType.PLUGIN,
     entry_point="cli_js_ep",
     requires=["cli"],
@@ -39,7 +38,7 @@ App(
         "modules/js_flipper.c",
         "modules/js_tests.c",
     ],
-    fap_libs=["assets"],
+    fap_libs=["assets", "mjs", "m"],
     fap_exclude_libs=["gcc"],
 )
 
