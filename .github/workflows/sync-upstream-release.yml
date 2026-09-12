@@ -186,8 +186,25 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ needs.check.outputs.new_tag }}-js-sd"
-          gh release create "$TAG" \
-            --repo "${{ github.repository }}" \
-            --title "$TAG" \
-            --notes "Automated JS-on-SD build (MJS linked into js_app.fap and cli_js.fal instead of firmware) rebased onto upstream ${{ needs.check.outputs.new_tag }}. Background: https://github.com/DarkFlippers/unleashed-firmware/issues/1144." \
-            dist/f7-C/*
+          # Regular files only: dist/f7-C also holds the unpacked f7-update-*
+          # directory, and gh cannot upload a directory as an asset. Its
+          # contents ship anyway inside flipper-z-f7-update-*.tgz.
+          mapfile -t ASSETS < <(find dist/f7-C -maxdepth 1 -type f | sort)
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "::error::No build artifacts found in dist/f7-C."
+            exit 1
+          fi
+          printf 'Uploading %s\n' "${ASSETS[@]}"
+          # Re-runs (force_rebuild) must not die on an existing release.
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              --repo "${{ github.repository }}" \
+              --clobber \
+              "${ASSETS[@]}"
+          else
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "$TAG" \
+              --notes "Automated JS-on-SD build (MJS linked into js_app.fap and cli_js.fal instead of firmware) rebased onto upstream ${{ needs.check.outputs.new_tag }}. Background: https://github.com/DarkFlippers/unleashed-firmware/issues/1144." \
+              "${ASSETS[@]}"
+          fi
