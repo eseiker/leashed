@@ -158,6 +158,7 @@ Bt* bt_alloc(void) {
     // Init default maximum packet size
     bt->max_packet_size = BLE_PROFILE_SERIAL_PACKET_SIZE_MAX;
     bt->current_profile = NULL;
+    bt->profile_suspended = false;
     // Keys storage
     bt->keys_storage = bt_keys_storage_alloc(BT_KEYS_STORAGE_PATH);
     // Alloc queue
@@ -448,6 +449,33 @@ static void bt_change_profile(Bt* bt, BtMessage* message) {
     }
 }
 
+static void bt_close_connection(Bt* bt);
+
+static void bt_suspend_profile(Bt* bt, BtMessage* message) {
+    bool result = !bt->profile_suspended;
+    if(result) {
+        bt_close_connection(bt);
+        /* furi_hal_bt_enter_ll_only() owns and frees the HAL profile next. */
+        bt->current_profile = NULL;
+        bt->profile_suspended = true;
+    }
+    if(message->result) *message->result = result;
+}
+
+static void bt_resume_default_profile(Bt* bt, BtMessage* message) {
+    bool result = false;
+    if(bt->profile_suspended) {
+        BtMessage profile_message = {
+            .data.profile.params = NULL,
+            .data.profile.template = ble_profile_serial,
+            .result = &result,
+        };
+        bt_change_profile(bt, &profile_message);
+        if(result) bt->profile_suspended = false;
+    }
+    if(message->result) *message->result = result;
+}
+
 static void bt_close_connection(Bt* bt) {
     bt_close_rpc_connection(bt);
     furi_hal_bt_stop_advertising();
@@ -565,37 +593,41 @@ int32_t bt_srv(void* p) {
             message.type,
             (void*)message.lock,
             (void*)message.result);
-        if(message.type == BtMessageTypeUpdateStatus) {
+        if(message.type == BtMessageTypeSuspendProfile) {
+            bt_suspend_profile(bt, &message);
+        } else if(message.type == BtMessageTypeResumeDefaultProfile) {
+            bt_resume_default_profile(bt, &message);
+        } else if(message.type == BtMessageTypeUpdateStatus && !bt->profile_suspended) {
             // Update view ports
             bt_statusbar_update(bt);
             bt_pin_code_hide(bt);
             if(bt->status_changed_cb) {
                 bt->status_changed_cb(bt->status, bt->status_changed_ctx);
             }
-        } else if(message.type == BtMessageTypeUpdateBatteryLevel) {
+        } else if(message.type == BtMessageTypeUpdateBatteryLevel && !bt->profile_suspended) {
             // Update battery level
             furi_hal_bt_update_battery_level(message.data.battery_level);
-        } else if(message.type == BtMessageTypeUpdatePowerState) {
+        } else if(message.type == BtMessageTypeUpdatePowerState && !bt->profile_suspended) {
             furi_hal_bt_update_power_state(message.data.power_state_charging);
-        } else if(message.type == BtMessageTypePinCodeShow) {
+        } else if(message.type == BtMessageTypePinCodeShow && !bt->profile_suspended) {
             // Display PIN code
             bt_pin_code_show(bt, message.data.pin_code);
-        } else if(message.type == BtMessageTypeKeysStorageUpdated) {
+        } else if(message.type == BtMessageTypeKeysStorageUpdated && !bt->profile_suspended) {
             bt_keys_storage_update(
                 bt->keys_storage,
                 message.data.key_storage_data.start_address,
                 message.data.key_storage_data.size);
-        } else if(message.type == BtMessageTypeSetProfile) {
+        } else if(message.type == BtMessageTypeSetProfile && !bt->profile_suspended) {
             bt_change_profile(bt, &message);
-        } else if(message.type == BtMessageTypeDisconnect) {
+        } else if(message.type == BtMessageTypeDisconnect && !bt->profile_suspended) {
             bt_close_connection(bt);
         } else if(message.type == BtMessageTypeForgetBondedDevices) {
             bt_keys_storage_delete(bt->keys_storage);
         } else if(message.type == BtMessageTypeGetSettings) {
             bt_handle_get_settings(bt, &message);
-        } else if(message.type == BtMessageTypeSetSettings) {
+        } else if(message.type == BtMessageTypeSetSettings && !bt->profile_suspended) {
             bt_handle_set_settings(bt, &message);
-        } else if(message.type == BtMessageTypeReloadKeysSettings) {
+        } else if(message.type == BtMessageTypeReloadKeysSettings && !bt->profile_suspended) {
             bt_handle_reload_keys_settings(bt);
         }
 

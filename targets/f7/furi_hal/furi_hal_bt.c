@@ -1,4 +1,5 @@
 #include "ble_glue.h"
+#include "furi_hal_bt_i.h"
 #include <core/check.h>
 #include <gap.h>
 #include <furi_hal_bt.h>
@@ -29,11 +30,13 @@
 typedef struct {
     FuriMutex* core2_mtx;
     FuriHalBtStack stack;
+    bool ll_only;
 } FuriHalBt;
 
 static FuriHalBt furi_hal_bt = {
     .core2_mtx = NULL,
     .stack = FuriHalBtStackUnknown,
+    .ll_only = false,
 };
 
 static FuriHalBleProfileBase* current_profile = NULL;
@@ -89,6 +92,87 @@ static bool furi_hal_bt_radio_stack_is_supported(const BleGlueC2Info* info) {
     return supported;
 }
 
+static bool furi_hal_bt_reset_c2_locked(void) {
+    FURI_LOG_I(TAG, "Reset SHCI");
+    if(!ble_glue_reinit_c2()) {
+        FURI_LOG_E(TAG, "Failed to reset SHCI");
+        return false;
+    }
+    ble_glue_stop();
+
+    furi_delay_ms(100);
+
+    furi_hal_bus_disable(FuriHalBusHSEM);
+    furi_hal_bus_disable(FuriHalBusIPCC);
+    furi_hal_bus_disable(FuriHalBusAES2);
+    furi_hal_bus_disable(FuriHalBusPKA);
+    furi_hal_bus_disable(FuriHalBusCRC);
+
+    furi_hal_bt.stack = FuriHalBtStackUnknown;
+    furi_hal_bt_init();
+    return true;
+}
+
+bool furi_hal_bt_enter_ll_only(void) {
+    furi_hal_bt_lock_core2();
+    furi_hal_power_insomnia_enter();
+
+    bool result = false;
+    do {
+        if(furi_hal_bt.ll_only || furi_hal_bt.stack != FuriHalBtStackFull ||
+           !ble_glue_is_radio_stack_ready()) {
+            FURI_LOG_E(TAG, "LL-only mode requires a running BLE Full stack");
+            break;
+        }
+
+        FURI_LOG_I(TAG, "Stop LL-host profile before LL-only mode");
+        furi_hal_bt_stop_advertising();
+        if(current_profile) {
+            current_profile->config->stop(current_profile);
+            current_profile = NULL;
+        }
+        hci_reset();
+        gap_thread_stop();
+        ble_app_deinit();
+
+        if(!furi_hal_bt_reset_c2_locked()) break;
+        if(!ble_glue_wait_for_c2_start(FURI_HAL_BT_C2_START_TIMEOUT)) break;
+        if(!furi_hal_bt_ensure_c2_mode(BleGlueC2ModeStack)) break;
+
+        const BleGlueC2Info* c2_info = ble_glue_get_c2_info();
+        if(!furi_hal_bt_radio_stack_is_supported(c2_info) ||
+           furi_hal_bt.stack != FuriHalBtStackFull) {
+            FURI_LOG_E(TAG, "LL-only mode did not restart BLE Full");
+            break;
+        }
+        furi_hal_bt.ll_only = true;
+        result = true;
+    } while(false);
+
+    furi_hal_power_insomnia_exit();
+    furi_hal_bt_unlock_core2();
+    return result;
+}
+
+bool furi_hal_bt_leave_ll_only(void) {
+    furi_hal_bt_lock_core2();
+    furi_hal_power_insomnia_enter();
+
+    bool result = furi_hal_bt.ll_only && furi_hal_bt.stack == FuriHalBtStackFull;
+    if(result) result = furi_hal_bt_reset_c2_locked();
+
+    furi_hal_power_insomnia_exit();
+    furi_hal_bt_unlock_core2();
+
+    if(result) {
+        result = furi_hal_bt_start_radio_stack();
+    }
+    if(!result) {
+        FURI_LOG_E(TAG, "Failed to restore BLE Full LL-host mode");
+    }
+    return result;
+}
+
 bool furi_hal_bt_start_radio_stack(void) {
     furi_hal_bt_lock_core2();
 
@@ -123,6 +207,7 @@ bool furi_hal_bt_start_radio_stack(void) {
             ble_glue_stop();
             break;
         }
+        furi_hal_bt.ll_only = false;
         res = true;
     } while(false);
 

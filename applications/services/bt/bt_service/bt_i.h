@@ -30,6 +30,8 @@ typedef enum {
     BtMessageTypePinCodeShow,
     BtMessageTypeKeysStorageUpdated,
     BtMessageTypeSetProfile,
+    BtMessageTypeSuspendProfile,
+    BtMessageTypeResumeDefaultProfile,
     BtMessageTypeDisconnect,
     BtMessageTypeForgetBondedDevices,
     BtMessageTypeGetSettings,
@@ -72,6 +74,7 @@ struct Bt {
     BtKeysStorage* keys_storage;
     BtStatus status;
     bool beacon_active;
+    bool profile_suspended;
     FuriHalBleProfileBase* current_profile;
     FuriMessageQueue* message_queue;
     NotificationApp* notification;

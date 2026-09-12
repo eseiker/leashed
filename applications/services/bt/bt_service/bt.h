@@ -50,6 +50,24 @@ FURI_WARN_UNUSED FuriHalBleProfileBase* bt_profile_start(
  */
 bool bt_profile_restore_default(Bt* bt);
 
+/** Suspend the BT service while an external controller host owns Core2.
+ * @note The caller must restore the default profile or reboot before exiting.
+ *
+ * @param bt        Bt instance
+ *
+ * @return          true on success
+ */
+bool bt_profile_suspend(Bt* bt);
+
+/** Resume the default BLE profile after external controller ownership.
+ * @note Call of this function leads to 2nd core restart
+ *
+ * @param bt        Bt instance
+ *
+ * @return          true on success
+ */
+bool bt_profile_resume_default(Bt* bt);
+
 /** Disconnect from Central
  *
  * @param bt        Bt instance

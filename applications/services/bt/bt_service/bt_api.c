@@ -30,6 +30,29 @@ bool bt_profile_restore_default(Bt* bt) {
     return bt->current_profile != NULL;
 }
 
+static bool bt_profile_set_suspended(Bt* bt, BtMessageType type) {
+    furi_check(bt);
+
+    bool result = false;
+    BtMessage message = {
+        .lock = api_lock_alloc_locked(),
+        .type = type,
+        .result = &result,
+    };
+    furi_check(
+        furi_message_queue_put(bt->message_queue, &message, FuriWaitForever) == FuriStatusOk);
+    api_lock_wait_unlock_and_free(message.lock);
+    return result;
+}
+
+bool bt_profile_suspend(Bt* bt) {
+    return bt_profile_set_suspended(bt, BtMessageTypeSuspendProfile);
+}
+
+bool bt_profile_resume_default(Bt* bt) {
+    return bt_profile_set_suspended(bt, BtMessageTypeResumeDefaultProfile);
+}
+
 void bt_disconnect(Bt* bt) {
     furi_check(bt);
 

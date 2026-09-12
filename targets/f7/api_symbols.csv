@@ -291,6 +291,7 @@ Header,+,targets/f7/ble_glue/profiles/serial_profile.h,,
 Header,+,targets/f7/ble_glue/services/battery_service.h,,
 Header,+,targets/f7/ble_glue/services/dev_info_service.h,,
 Header,+,targets/f7/ble_glue/services/serial_service.h,,
+Header,+,targets/f7/furi_hal/furi_hal_bt_hci.h,,
 Header,+,targets/f7/furi_hal/furi_hal_bus.h,,
 Header,+,targets/f7/furi_hal/furi_hal_clock.h,,
 Header,+,targets/f7/furi_hal/furi_hal_dma.h,,
@@ -801,6 +802,7 @@ Function,+,bit_lib_test_parity_32,_Bool,"uint32_t, BitLibParity"
 Function,-,ble_app_deinit,void,
 Function,-,ble_app_get_key_storage_buff,void,"uint8_t**, uint16_t*"
 Function,-,ble_app_init,_Bool,
+Function,-,ble_app_start_ll_only,_Bool,
 Function,-,ble_event_app_notification,BleEventFlowStatus,void*
 Function,-,ble_event_dispatcher_init,void,
 Function,-,ble_event_dispatcher_process_event,BleEventFlowStatus,void*
@@ -877,7 +879,9 @@ Function,+,bt_keys_storage_set_ram_params,void,"BtKeysStorage*, uint8_t*, uint16
 Function,+,bt_keys_storage_set_storage_path,void,"Bt*, const char*"
 Function,+,bt_keys_storage_update,_Bool,"BtKeysStorage*, uint8_t*, uint32_t"
 Function,+,bt_profile_restore_default,_Bool,Bt*
+Function,+,bt_profile_resume_default,_Bool,Bt*
 Function,+,bt_profile_start,FuriHalBleProfileBase*,"Bt*, const FuriHalBleProfileTemplate*, FuriHalBleProfileParams"
+Function,+,bt_profile_suspend,_Bool,Bt*
 Function,+,bt_set_settings,void,"Bt*, const BtSettings*"
 Function,+,bt_set_status_changed_callback,void,"Bt*, BtStatusChangedCallback, void*"
 Function,+,bt_settings_load,void,BtSettings*
@@ -1460,6 +1464,11 @@ Function,+,furi_hal_bt_get_key_storage_buff,void,"uint8_t**, uint16_t*"
 Function,+,furi_hal_bt_get_radio_stack,FuriHalBtStack,
 Function,+,furi_hal_bt_get_rssi,float,
 Function,+,furi_hal_bt_get_transmitted_packets,uint32_t,
+Function,+,furi_hal_bt_hci_acquire,_Bool,uint32_t
+Function,+,furi_hal_bt_hci_get_abi,uint32_t,
+Function,+,furi_hal_bt_hci_receive,int32_t,"uint8_t*, size_t, uint32_t"
+Function,+,furi_hal_bt_hci_release,_Bool,
+Function,+,furi_hal_bt_hci_send,_Bool,"const uint8_t*, size_t, uint32_t"
 Function,-,furi_hal_bt_init,void,
 Function,+,furi_hal_bt_is_active,_Bool,
 Function,+,furi_hal_bt_is_alive,_Bool,
