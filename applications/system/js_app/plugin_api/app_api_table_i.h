@@ -1,8 +1,13 @@
 #include "../js_modules.h"
 
 /*
- * App-local symbols exposed to JS module plugins. MJS lives in js_app.fap in
- * BLE Full builds, so its former firmware API surface is resolved here.
+ * App-local symbols exposed to JS module plugins. The MJS runtime is linked
+ * into js_app.fap (and cli_js.fal) instead of the firmware, so JS modules
+ * resolve their mjs_* imports here rather than from the firmware API table.
+ *
+ * The mjs_* entries must match the inactive mjs_* rows in
+ * targets/f7/api_symbols.csv. Run scripts/check_js_api_table.py after
+ * editing either file.
  */
 static constexpr auto app_api_table = sort(create_array_t<sym_entry>(
     API_METHOD(js_delay_with_flags, bool, (struct mjs*, uint32_t)),
