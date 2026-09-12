@@ -1,0 +1,193 @@
+name: Sync upstream release (JS-on-SD variant)
+
+# Rebases feat/js-sd-mjs and feat/ble-full-ll-only-hci onto each new upstream
+# unlshd-* release, rebuilds the BLE Full package, and publishes it as a
+# release on this fork. Runs on a daily schedule; the "check" job is a
+# cheap no-op when upstream has not released anything new.
+#
+# Background: DarkFlippers/unleashed-firmware#1144 asked upstream to take an
+# SD-resident MJS runtime; the maintainers declined it for the main tree
+# (even as a branch), so it lives here instead, kept current against every
+# release.
+#
+# Design notes:
+#  - `release` and `dev` on this fork are kept exact, unmodified mirrors of
+#    upstream's branches of the same name. Their tips are what "have we
+#    already synced this release" is judged against, and
+#    merge-base(feat/js-sd-mjs, release) recovers the exact commit the JS
+#    branch was last rebased onto, so no separate state file is needed.
+#    Never add commits to `release` or `dev` here.
+#  - This workflow itself lives on `ci`, a third branch carrying nothing but
+#    this file on top of upstream `dev` (so the schedule trigger has a
+#    default branch to run from without turning `dev` into something other
+#    than a plain mirror). Each sync cycle also rebases `ci`'s one commit
+#    onto the latest upstream `dev`, so it never just sits frozen at
+#    whatever `dev` looked like when this was set up.
+#  - Nothing here hardcodes this repository's own name (only the upstream URL
+#    it syncs from), so renaming the repo does not break it. GitHub already
+#    disables scheduled workflows in forks unless they are enabled by hand,
+#    so no `github.repository == ...` guard is needed either.
+#  - A failed rebase or failed build aborts before anything is pushed, so a
+#    bad upstream change never clobbers a known-good branch. Watch the
+#    Actions tab (or the run's failure notification) for red runs; a failed
+#    rebase needs a manual `git rebase --onto` and a force-push to resolve.
+#  - The BLE Full build reproduces what the JS-on-SD proof of concept
+#    measured: MJS linked into js_app.fap and cli_js.fal instead of
+#    firmware, ~39 KB of CPU1 flash back, ~40 KB less script heap at
+#    runtime. See the fork's AGENTS.md for the full history.
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: "Rebuild even if already in sync with upstream release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_URL: https://github.com/DarkFlippers/unleashed-firmware.git
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      new_release: ${{ steps.compare.outputs.new_release }}
+      new_tag: ${{ steps.compare.outputs.new_tag }}
+      old_release: ${{ steps.compare.outputs.old_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream release and our own branches
+        run: |
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch upstream +refs/heads/release:refs/remotes/upstream/release --tags --quiet
+          git fetch origin \
+            +refs/heads/release:refs/remotes/origin/release \
+            +refs/heads/feat/js-sd-mjs:refs/remotes/origin/feat/js-sd-mjs \
+            +refs/heads/feat/ble-full-ll-only-hci:refs/remotes/origin/feat/ble-full-ll-only-hci \
+            --quiet
+
+      - name: Compare upstream release to our mirror
+        id: compare
+        run: |
+          UPSTREAM_TIP="$(git rev-parse upstream/release)"
+          OLD_RELEASE="$(git rev-parse origin/release)"
+          NEW_TAG="$(git tag -l 'unlshd-*' --sort=-creatordate --points-at "$UPSTREAM_TIP" | head -1)"
+          echo "old_release=$OLD_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "new_tag=${NEW_TAG:-$UPSTREAM_TIP}" >> "$GITHUB_OUTPUT"
+          if [ "$UPSTREAM_TIP" = "$OLD_RELEASE" ] && [ "${{ inputs.force_rebuild }}" != "true" ]; then
+            echo "No new upstream release; fork's release mirror already at $UPSTREAM_TIP."
+            echo "new_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Upstream release to sync: ${NEW_TAG:-$UPSTREAM_TIP} ($UPSTREAM_TIP)"
+            echo "new_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  rebase-and-build:
+    needs: check
+    if: needs.check.outputs.new_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream release/dev and our own branches
+        run: |
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch upstream \
+            +refs/heads/release:refs/remotes/upstream/release \
+            +refs/heads/dev:refs/remotes/upstream/dev \
+            --tags --quiet
+          git fetch origin \
+            +refs/heads/release:refs/remotes/origin/release \
+            +refs/heads/ci:refs/remotes/origin/ci \
+            +refs/heads/feat/js-sd-mjs:refs/remotes/origin/feat/js-sd-mjs \
+            +refs/heads/feat/ble-full-ll-only-hci:refs/remotes/origin/feat/ble-full-ll-only-hci \
+            --quiet
+
+      - name: Keep ci current with upstream dev
+        run: |
+          OLD_DEV_BASE="$(git merge-base origin/ci upstream/dev)"
+          git checkout -B ci origin/ci
+          if git rebase --onto upstream/dev "$OLD_DEV_BASE" ci; then
+            if [ "$(git rev-parse ci)" != "$(git rev-parse origin/ci)" ]; then
+              git push origin --force-with-lease="ci:origin/ci" ci
+            fi
+          else
+            git rebase --abort
+            echo "::warning::Could not rebase ci onto the latest upstream/dev (conflict in the workflow file itself?). Leaving ci as-is; this does not block the release sync below."
+          fi
+
+      - name: Rebase feat/js-sd-mjs onto the new release
+        run: |
+          OLD_RELEASE="${{ needs.check.outputs.old_release }}"
+          git checkout -B feat/js-sd-mjs origin/feat/js-sd-mjs
+          git rebase --onto upstream/release "$OLD_RELEASE" feat/js-sd-mjs || {
+            git rebase --abort
+            echo "::error::feat/js-sd-mjs conflicted rebasing onto the new release. Nothing was pushed; resolve by hand: git rebase --onto origin/release $OLD_RELEASE feat/js-sd-mjs"
+            exit 1
+          }
+
+      - name: Rebase feat/ble-full-ll-only-hci onto the rebased js-sd-mjs
+        run: |
+          OLD_JS_SD_MJS="$(git rev-parse origin/feat/js-sd-mjs)"
+          git checkout -B feat/ble-full-ll-only-hci origin/feat/ble-full-ll-only-hci
+          git rebase --onto feat/js-sd-mjs "$OLD_JS_SD_MJS" feat/ble-full-ll-only-hci || {
+            git rebase --abort
+            echo "::error::feat/ble-full-ll-only-hci conflicted rebasing onto the rebased js-sd-mjs. feat/js-sd-mjs was NOT pushed either, so both branches are untouched; resolve by hand."
+            exit 1
+          }
+
+      - name: Check the JS app-local API table still matches api_symbols.csv
+        run: |
+          git checkout feat/js-sd-mjs
+          python3 scripts/check_js_api_table.py
+
+      - name: Build BLE Full (JS-on-SD)
+        env:
+          DIST_SUFFIX: ${{ needs.check.outputs.new_tag }}-ble-full-js-sd
+        run: |
+          git checkout feat/js-sd-mjs
+          # Match upstream's own CI scope: only the in-tree Scripts pack, not the
+          # separately-maintained prebuilt plugin bundle, so the build is fully
+          # reproducible from this repo alone.
+          find applications/main/extra_resources/resources/apps/ -mindepth 1 -maxdepth 1 ! -name Scripts -exec rm -rf {} + || true
+          ./fbt COMPACT=1 DEBUG=0 DIST_SUFFIX="$DIST_SUFFIX" updater_package \
+            COPRO_OB_DATA=scripts/ob_custradio.data \
+            COPRO_STACK_BIN=stm32wb5x_BLE_Stack_full_fw.bin \
+            COPRO_STACK_TYPE=ble_full
+
+      - name: Push rebased branches and the release mirror
+        run: |
+          git push origin --force-with-lease="feat/js-sd-mjs:origin/feat/js-sd-mjs" feat/js-sd-mjs
+          git push origin --force-with-lease="feat/ble-full-ll-only-hci:origin/feat/ble-full-ll-only-hci" feat/ble-full-ll-only-hci
+          git push origin upstream/release:refs/heads/release
+
+      - name: Publish a GitHub Release with the build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ needs.check.outputs.new_tag }}-js-sd"
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "$TAG" \
+            --notes "Automated JS-on-SD build (MJS linked into js_app.fap and cli_js.fal instead of firmware) rebased onto upstream ${{ needs.check.outputs.new_tag }}. Background: https://github.com/DarkFlippers/unleashed-firmware/issues/1144." \
+            dist/f7-C/*
