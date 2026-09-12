@@ -472,6 +472,7 @@ Function,+,__aeabi_i2d,double,int
 Function,+,__aeabi_idiv0,int,int
 Function,+,__aeabi_l2d,double,long long
 Function,+,__aeabi_ldiv0,long long,long long
+Function,+,__aeabi_ldivmod,void*,"int64_t, int64_t"
 Function,+,__aeabi_ui2d,double,unsigned int
 Function,+,__aeabi_ul2d,double,unsigned long long
 Function,+,__aeabi_uldivmod,void*,"uint64_t, uint64_t"

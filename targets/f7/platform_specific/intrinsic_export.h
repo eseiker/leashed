@@ -8,6 +8,7 @@ extern "C" {
 
 void __clear_cache(void*, void*);
 void* __aeabi_uldivmod(uint64_t, uint64_t);
+void* __aeabi_ldivmod(int64_t, int64_t);
 double __aeabi_f2d(float);
 
 /*
