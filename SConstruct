@@ -394,7 +394,13 @@ distenv.PhonyTarget(
     IMG_LINT_SOURCES=firmware_env["IMG_LINT_SOURCES"],
 )
 
-distenv.Alias("lint_all", ["lint", "lint_py", "lint_img"])
+# Check that the JS Runner app-local MJS table matches api_symbols.csv
+distenv.PhonyTarget(
+    "lint_js_api",
+    [["${PYTHON3}", "${FBT_SCRIPT_DIR}/check_js_api_table.py"]],
+)
+
+distenv.Alias("lint_all", ["lint", "lint_py", "lint_img", "lint_js_api"])
 distenv.Alias("format_all", ["format", "format_py", "format_img"])
 
 
