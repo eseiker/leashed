@@ -2,10 +2,11 @@ App(
     appid="js_app",
     name="JS Runner",
     apptype=FlipperAppType.EXTERNAL,
+    targets=["f7"],
     cdefines=["JS_RUNNER_FAP"],
     fap_icon="icon.png",
     fap_category="assets",
-    fap_libs=["assets"],
+    fap_libs=["assets", "mjs", "m", "gcc"],
     entry_point="js_app",
     stack_size=2 * 1024,
     order=10,
@@ -19,12 +20,13 @@ App(
         "modules/js_flipper.c",
         "modules/js_tests.c",
     ],
-    fap_exclude_libs=["gcc"],
+    fap_exclude_libs=[],
 )
 
 App(
     appid="cli_js",
-    targets=["f7"],
+    # BLE Full compact builds omit the firmware-resident MJS runtime.
+    targets=[],
     apptype=FlipperAppType.PLUGIN,
     entry_point="cli_js_ep",
     requires=["cli"],
