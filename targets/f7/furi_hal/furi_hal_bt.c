@@ -252,6 +252,10 @@ bool furi_hal_bt_is_active(void) {
     return gap_get_state() > GapStateIdle;
 }
 
+bool furi_hal_bt_is_connected(void) {
+    return gap_get_state() == GapStateConnected;
+}
+
 void furi_hal_bt_start_advertising(void) {
     if(gap_get_state() == GapStateIdle) {
         gap_start_advertising();

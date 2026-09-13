@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include <furi.h>
+
 #include <stdint.h>
 #include <stdbool.h>
 #include "elf/elf_api_interface.h"
@@ -33,6 +35,20 @@ typedef struct {
     uint16_t hardware_target_id;
 } FlipperApplicationManifestBase;
 
+/** Manifest flags for external applications.
+ *
+ * Bit positions are kept compatible with the Momentum and Moon forks so a .fap
+ * built for either resolves the same way here. Only ForceXIP is acted upon by
+ * this firmware; the others are accepted and ignored.
+ */
+typedef enum FURI_PACKED {
+    FlipperApplicationFlagDefault = 0,
+    FlipperApplicationFlagInsomniaSafe = (1 << 0),
+    FlipperApplicationFlagForceXIP = (1 << 1),
+
+    FlipperApplicationFlagUnloadAssetPacks = (1 << 7),
+} FlipperApplicationFlag;
+
 typedef struct {
     FlipperApplicationManifestBase base;
     uint16_t stack_size;
@@ -42,7 +58,24 @@ typedef struct {
     char icon[FAP_MANIFEST_MAX_ICON_SIZE];
 } FlipperApplicationManifestV1;
 
-typedef FlipperApplicationManifestV1 FlipperApplicationManifest;
+/** Layout produced by upstream and by any SDK without XIP support. */
+typedef FlipperApplicationManifestV1 FlipperApplicationManifestOfw;
+
+/** Extended layout: identical to V1 with the flags byte appended. */
+typedef struct {
+    FlipperApplicationManifestBase base;
+    uint16_t stack_size;
+    uint32_t app_version;
+    char name[FAP_MANIFEST_MAX_APP_NAME_LENGTH];
+    char has_icon;
+    char icon[FAP_MANIFEST_MAX_ICON_SIZE];
+
+    FlipperApplicationFlag flags;
+} FlipperApplicationManifestV1Ex;
+
+typedef FlipperApplicationManifestV1Ex FlipperApplicationManifestEx;
+
+typedef FlipperApplicationManifestEx FlipperApplicationManifest;
 
 #pragma pack(pop)
 

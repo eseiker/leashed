@@ -50,6 +50,7 @@ void plugin_manager_free(PluginManager* manager) {
 static PluginManagerError
     plugin_manager_load_file(PluginManager* manager, const char* path, bool scanning) {
     FlipperApplication* lib = flipper_application_alloc(manager->storage, manager->api_interface);
+    /* XIP is auto-disabled for plugins in flipper_application_load() */
 
     PluginManagerError error = PluginManagerErrorNone;
     do {

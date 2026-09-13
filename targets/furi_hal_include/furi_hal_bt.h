@@ -129,6 +129,15 @@ void furi_hal_bt_update_power_state(bool charging);
  */
 bool furi_hal_bt_is_active(void);
 
+/** Checks if a BLE connection is established
+ *
+ * Narrower than furi_hal_bt_is_active(), which is also true while merely
+ * advertising. Callers that must not disturb a live link want this one.
+ *
+ * @return          true if a central is connected, false otherwise
+ */
+bool furi_hal_bt_is_connected(void);
+
 /** Start advertising
  */
 void furi_hal_bt_start_advertising(void);

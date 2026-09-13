@@ -245,3 +245,19 @@ Max butthurt: 13
 Min level: 1
 Max level: 3
 Weight: 4
+
+# Level-up one-shots. Weight 0 keeps them out of the idle rotation; the
+# animation manager loads them by name when the dolphin levels up.
+Name: Levelup1_128x64
+Min butthurt: 0
+Max butthurt: 14
+Min level: 1
+Max level: 3
+Weight: 0
+
+Name: Levelup2_128x64
+Min butthurt: 0
+Max butthurt: 14
+Min level: 1
+Max level: 3
+Weight: 0

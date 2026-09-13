@@ -2,10 +2,15 @@ App(
     appid="js_app",
     name="JS Runner",
     apptype=FlipperAppType.EXTERNAL,
+    targets=["f7"],
     cdefines=["JS_RUNNER_FAP"],
+    # The engine is ~50 KB of read-only code. Left in RAM it crowds out the
+    # modules a script loads: gui.js pulls in 18 of them and ran out of heap.
+    # Force it into the XIP region so the heap is the script's.
+    flags=["ForceXIP"],
     fap_icon="icon.png",
     fap_category="assets",
-    fap_libs=["assets"],
+    fap_libs=["assets", "mjs", "m"],
     entry_point="js_app",
     stack_size=2 * 1024,
     order=10,
@@ -37,7 +42,7 @@ App(
         "modules/js_flipper.c",
         "modules/js_tests.c",
     ],
-    fap_libs=["assets"],
+    fap_libs=["assets", "mjs", "m"],
     fap_exclude_libs=["gcc"],
 )
 

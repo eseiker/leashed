@@ -14,6 +14,8 @@
 #include <loader/loader.h>
 
 #include "views/archive_browser_view.h"
+
+#define ARCHIVE_RESTORE_ARGS_PREFIX "restore:"
 #include "scenes/archive_scene.h"
 
 typedef enum {
@@ -39,6 +41,11 @@ struct ArchiveApp {
 
     FuriString* fav_move_str;
     FuriString* dst_path;
+
+    /* Where to reopen after handing off to another app; see archive_run_in_app(). */
+    bool restore_pending;
+    ArchiveTabEnum restore_tab;
+    FuriString* restore_path;
     char text_store[MAX_NAME_LEN];
     char file_extension[MAX_EXT_LEN + 1];
 };

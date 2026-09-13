@@ -327,6 +327,13 @@ void subghz_protocol_decoder_nice_flor_s_set_skip_o_code(void* context, bool ski
  */
 uint64_t subghz_protocol_nice_flor_s_decrypt_ic(uint64_t data, uint16_t ic, const char* file_name);
 
+/**
+ * Clear the Faac SLH programming-mode latch.
+ * The decoder sets it when it sees a programming frame; the app clears it when
+ * leaving the receive scene so the next session starts clean.
+ */
+void faac_slh_reset_prog_mode(void);
+
 #ifdef __cplusplus
 }
 #endif

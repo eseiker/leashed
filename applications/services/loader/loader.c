@@ -3,6 +3,7 @@
 #include <applications.h>
 #include <storage/storage.h>
 #include <furi_hal.h>
+#include <furi_hal_bt.h>
 #include <assets_icons.h>
 
 #include <dialogs/dialogs.h>
@@ -146,18 +147,36 @@ static void loader_show_gui_error(
             loader_dialog_prepare_and_show(dialogs, &err_outdated_firmware);
             break;*/
         case LoaderStatusErrorOutOfMemory:
-            dialog_message_set_header(
-                message, "Error: Out of Memory", 64, 0, AlignCenter, AlignTop);
-            dialog_message_set_text(
-                message,
-                "Not enough RAM to run the\napp. Please reboot the device",
-                64,
-                13,
-                AlignCenter,
-                AlignTop);
-            dialog_message_set_buttons(message, NULL, NULL, "Reboot");
-            if(dialog_message_show(dialogs, message) == DialogMessageButtonRight) {
-                furi_hal_power_reset();
+            if(furi_hal_bt_is_connected()) {
+                /* A large app runs from the XIP flash region, and writing that
+                 * region takes the flash controller away from the radio, so it
+                 * is refused while a link is up. Rebooting does not help here;
+                 * disconnecting does. */
+                dialog_message_set_header(
+                    message, "Bluetooth Connected", 64, 0, AlignCenter, AlignTop);
+                dialog_message_set_text(
+                    message,
+                    "Too large to load while\nBluetooth is connected.\nDisconnect and try again.",
+                    64,
+                    13,
+                    AlignCenter,
+                    AlignTop);
+                dialog_message_set_buttons(message, NULL, NULL, NULL);
+                dialog_message_show(dialogs, message);
+            } else {
+                dialog_message_set_header(
+                    message, "Error: Out of Memory", 64, 0, AlignCenter, AlignTop);
+                dialog_message_set_text(
+                    message,
+                    "Not enough RAM to run the\napp. Please reboot the device",
+                    64,
+                    13,
+                    AlignCenter,
+                    AlignTop);
+                dialog_message_set_buttons(message, NULL, NULL, "Reboot");
+                if(dialog_message_show(dialogs, message) == DialogMessageButtonRight) {
+                    furi_hal_power_reset();
+                }
             }
             break;
         default:

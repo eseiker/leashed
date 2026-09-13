@@ -526,6 +526,68 @@ void archive_switch_tab(ArchiveBrowserView* browser, InputKey key) {
     }
 }
 
+void archive_restore_location(ArchiveBrowserView* browser, ArchiveTabEnum tab, const char* target) {
+    furi_assert(browser);
+    furi_assert(target);
+
+    if(tab >= ArchiveTabTotal ||
+       (tab == ArchiveTabInternal && !furi_hal_rtc_is_flag_set(FuriHalRtcFlagDebug))) {
+        archive_update_focus(browser, "");
+        return;
+    }
+
+    const char* home = archive_get_default_path(tab);
+    archive_set_tab(browser, tab);
+    browser->is_root = true;
+
+    /* Favourites and the app pseudo-folders are read synchronously, and the usual
+     * focus search finds the item by path. */
+    if(tab == ArchiveTabFavorites || !strncmp(home, "/app:", 5)) {
+        furi_string_set_str(browser->path, home);
+        archive_update_focus(browser, target);
+        return;
+    }
+
+    /* Folder tabs load through the worker. Given a file path, the worker opens its
+     * folder with that file selected. Only accept targets inside this tab. */
+    FuriString* start = furi_string_alloc_set_str(target);
+    FuriString* folder = furi_string_alloc_set_str(target);
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    FileInfo info;
+    bool usable = furi_string_start_with_str(start, home) &&
+                  storage_common_stat(storage, target, &info) == FSE_OK;
+    if(usable && !file_info_is_dir(&info)) {
+        size_t slash = furi_string_search_rchar(folder, '/');
+        if(slash == FURI_STRING_FAILURE) {
+            usable = false;
+        } else {
+            furi_string_left(folder, slash);
+        }
+    }
+    furi_record_close(RECORD_STORAGE);
+
+    if(!usable || !archive_is_dir_exists(folder)) {
+        furi_string_set_str(start, home);
+        furi_string_set_str(folder, home);
+    }
+
+    furi_string_set(browser->path, folder);
+    with_view_model(
+        browser->view,
+        ArchiveBrowserViewModel * model,
+        {
+            model->item_idx = 0;
+            model->array_offset = 0;
+        },
+        false);
+    bool filtered = strcmp(archive_get_tab_ext(tab), "*") != 0;
+    archive_file_browser_set_path(browser, start, archive_get_tab_ext(tab), filtered, filtered);
+    archive_update_offset(browser);
+
+    furi_string_free(folder);
+    furi_string_free(start);
+}
+
 void archive_enter_dir(ArchiveBrowserView* browser, FuriString* path) {
     furi_assert(browser);
     furi_assert(path);

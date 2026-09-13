@@ -54,6 +54,8 @@
 //#define FURI_HAL_FLASH_C2_LOCK_TIMEOUT_MS (10000U) /* 10 seconds */
 #define FURI_HAL_FLASH_C2_LOCK_TIMEOUT_MS (3000U) /* 3 seconds */
 
+static volatile bool furi_hal_flash_batch_active = false;
+
 #define IS_ADDR_ALIGNED_64BITS(__VALUE__) (((__VALUE__) & 0x7U) == (0x00UL))
 #define IS_FLASH_PROGRAM_ADDRESS(__VALUE__)                                             \
     (((__VALUE__) >= FLASH_BASE) && ((__VALUE__) <= (FLASH_BASE + FLASH_SIZE - 8UL)) && \
@@ -141,8 +143,18 @@ static void furi_hal_flash_lock(void) {
 
 static void furi_hal_flash_begin_with_core2(bool erase_flag) {
     furi_hal_power_insomnia_enter();
-    /* Take flash controller ownership */
+    /* Take flash controller ownership.
+     *
+     * Bounded by the same timeout as the waits below. CPU2 holds this
+     * semaphore while the radio is busy, so an unbounded spin here hangs the
+     * device outright with insomnia already entered, rather than failing. */
+    FuriHalCortexTimer own_timer =
+        furi_hal_cortex_timer_get(FURI_HAL_FLASH_C2_LOCK_TIMEOUT_MS * 1000);
     while(LL_HSEM_1StepLock(HSEM, CFG_HW_FLASH_SEMID) != 0) {
+        if(furi_hal_cortex_timer_is_expired(own_timer)) {
+            furi_hal_power_insomnia_exit();
+            furi_crash("Flash: core2 never released the flash controller");
+        }
         furi_thread_yield();
     }
 
@@ -187,6 +199,18 @@ static void furi_hal_flash_begin_with_core2(bool erase_flag) {
 }
 
 static void furi_hal_flash_begin(bool erase_flag) {
+    if(furi_hal_flash_batch_active) {
+        /* Batch mode: Core2 mutex + SHCI already held by batch_begin.
+         * Just do the per-operation flash controller setup. */
+        if(furi_hal_bt_is_alive()) {
+            /* Still need per-op HSEM + critical section for the actual flash access */
+            furi_hal_flash_begin_with_core2(false); /* false = skip SHCI notification */
+        } else {
+            furi_hal_flash_unlock();
+        }
+        return;
+    }
+
     /* Acquire dangerous ops mutex */
     furi_hal_bt_lock_core2();
 
@@ -222,6 +246,16 @@ static void furi_hal_flash_end_with_core2(bool erase_flag) {
 }
 
 static void furi_hal_flash_end(bool erase_flag) {
+    if(furi_hal_flash_batch_active) {
+        /* Batch mode: release per-op locks but keep Core2 mutex + SHCI */
+        if(furi_hal_bt_is_alive()) {
+            furi_hal_flash_end_with_core2(false); /* false = skip SHCI OFF */
+        } else {
+            furi_hal_flash_lock();
+        }
+        return;
+    }
+
     /* If Core2 is running - use IPC locking */
     if(furi_hal_bt_is_alive()) {
         furi_hal_flash_end_with_core2(erase_flag);
@@ -233,7 +267,7 @@ static void furi_hal_flash_end(bool erase_flag) {
     furi_hal_bt_unlock_core2();
 }
 
-static void furi_hal_flush_cache(void) {
+void furi_hal_flash_flush_cache(void) {
     /* Flush instruction cache  */
     if(READ_BIT(FLASH->ACR, FLASH_ACR_ICEN) == FLASH_ACR_ICEN) {
         /* Disable instruction cache  */
@@ -255,6 +289,53 @@ static void furi_hal_flush_cache(void) {
         /* Enable data cache */
         LL_FLASH_EnableDataCache();
     }
+}
+
+void furi_hal_flash_batch_begin(void) {
+    furi_check(!furi_hal_flash_batch_active);
+    furi_hal_bt_lock_core2();
+    if(furi_hal_bt_is_alive()) {
+        furi_hal_power_insomnia_enter();
+        /* Notify Core2 once to suspend flash activity for the entire batch */
+        SHCI_C2_FLASH_EraseActivity(ERASE_ACTIVITY_ON);
+        furi_delay_us(5);
+    }
+    furi_hal_flash_batch_active = true;
+}
+
+void furi_hal_flash_batch_end(void) {
+    furi_check(furi_hal_flash_batch_active);
+    furi_hal_flash_batch_active = false;
+    if(furi_hal_bt_is_alive()) {
+        SHCI_C2_FLASH_EraseActivity(ERASE_ACTIVITY_OFF);
+        furi_hal_power_insomnia_exit();
+    }
+    furi_hal_bt_unlock_core2();
+}
+
+bool furi_hal_flash_batch_is_active(void) {
+    return furi_hal_flash_batch_active;
+}
+
+static volatile bool furi_hal_flash_protection_active = false;
+
+void furi_hal_flash_protect_during_execution(void) {
+    if(furi_hal_flash_protection_active) return; /* already protected */
+    furi_hal_bt_lock_core2();
+    if(furi_hal_bt_is_alive()) {
+        SHCI_C2_FLASH_EraseActivity(ERASE_ACTIVITY_ON);
+        furi_delay_us(5);
+    }
+    furi_hal_flash_protection_active = true;
+}
+
+void furi_hal_flash_unprotect_during_execution(void) {
+    if(!furi_hal_flash_protection_active) return;
+    furi_hal_flash_protection_active = false;
+    if(furi_hal_bt_is_alive()) {
+        SHCI_C2_FLASH_EraseActivity(ERASE_ACTIVITY_OFF);
+    }
+    furi_hal_bt_unlock_core2();
 }
 
 bool furi_hal_flash_wait_last_operation(uint32_t timeout) {
@@ -318,7 +399,7 @@ void furi_hal_flash_erase(uint8_t page) {
     CLEAR_BIT(FLASH->CR, (FLASH_CR_PER | FLASH_CR_PNB));
 
     /* Flush the caches to be sure of the data consistency */
-    furi_hal_flush_cache();
+    furi_hal_flash_flush_cache();
 
     furi_hal_flash_end(true);
     op_stat = DWT->CYCCNT - op_stat;
@@ -454,6 +535,58 @@ void furi_hal_flash_program_page(const uint8_t page, const uint8_t* data, uint16
     FURI_LOG_T(
         TAG,
         "program_page took %lu clocks or %luus",
+        op_stat,
+        op_stat / furi_hal_cortex_instructions_per_microsecond());
+}
+
+void furi_hal_flash_write_block(size_t address, const uint8_t* data, size_t length) {
+    furi_check(IS_ADDR_ALIGNED_64BITS(address));
+    furi_check(length > 0);
+
+    const uint8_t DWORD_SIZE = 8;
+
+    uint32_t op_stat = DWT->CYCCNT;
+
+    /* Notify Core2 (BLE) to suspend flash activity, same as erase.
+     * Without this, Core2 keeps re-acquiring the flash semaphore and
+     * the HSEM spin-loop in furi_hal_flash_begin_with_core2 can stall
+     * indefinitely — it has no timeout. */
+    furi_hal_flash_begin(true);
+
+    furi_check(furi_hal_flash_wait_last_operation(FURI_HAL_FLASH_TIMEOUT));
+    furi_check(FLASH->SR == 0);
+
+    size_t length_written = 0;
+
+    /* Single begin/end cycle with dword programming.
+     * Much faster than per-dword begin/end (the original bottleneck).
+     * FSTPG (fast programming) is intentionally NOT used here — it requires
+     * careful row alignment and has caused flash controller hangs. */
+    SET_BIT(FLASH->CR, FLASH_CR_PG);
+
+    while(length_written + DWORD_SIZE <= length) {
+        furi_hal_flash_write_dword_internal(
+            address + length_written, (uint64_t*)(data + length_written));
+        length_written += DWORD_SIZE;
+    }
+
+    /* Handle trailing bytes with zero-padding */
+    if(length_written < length) {
+        uint64_t tail_data = 0;
+        for(uint16_t i = 0; i < (length - length_written); i++) {
+            tail_data |= (((uint64_t)data[length_written + i]) << (i * 8));
+        }
+        furi_hal_flash_write_dword_internal(address + length_written, &tail_data);
+    }
+
+    CLEAR_BIT(FLASH->CR, FLASH_CR_PG);
+
+    furi_hal_flash_end(true);
+    op_stat = DWT->CYCCNT - op_stat;
+    FURI_LOG_T(
+        TAG,
+        "write_block %u bytes took %lu clocks or %luus",
+        length,
         op_stat,
         op_stat / furi_hal_cortex_instructions_per_microsecond());
 }

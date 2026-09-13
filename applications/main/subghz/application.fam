@@ -1,8 +1,13 @@
 App(
     appid="subghz",
     name="Sub-GHz",
-    apptype=FlipperAppType.APP,
+    apptype=FlipperAppType.MENUEXTERNAL,
     targets=["f7"],
+    # Upstream runs this app's ~45 KB of code from flash. From the SD card it would
+    # sit on the heap, and then the Frequency Analyzer plugin could not load
+    # ("Analyzer plugin is missing or outdated"). ForceXIP moves it to the XIP
+    # region instead. Confirmed on hardware.
+    flags=["ForceXIP"],
     cdefines=["APP_SUBGHZ"],
     entry_point="subghz_app",
     requires=[
@@ -22,6 +27,7 @@ App(
     fap_libs=["assets", "hwdrivers"],
     fap_icon="icon.png",
     fap_category="Sub-GHz",
+    fap_exclude_libs=["gcc"],
 )
 
 App(
@@ -38,6 +44,10 @@ App(
     apptype=FlipperAppType.STARTUP,
     entry_point="subghz_dangerous_freq",
     requires=["storage", "subghz"],
+    # Name the one file this hook needs. With the app itself external, nothing
+    # else here narrows the firmware build, and the default glob would pull in
+    # both scenes/ and plugins/add_manually/, which define the same scenes.
+    sources=["subghz_dangerous_freq.c", "subghz_last_settings.c"],
     order=650,
 )
 

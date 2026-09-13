@@ -9,6 +9,9 @@
 #include "../views/desktop_view_main.h"
 #include "desktop_scene.h"
 
+/* Archive is an SD-card app on this firmware, not a built-in one. */
+#define ARCHIVE_APP_PATH EXT_PATH("apps/Tools/archive.fap")
+
 #define TAG "DesktopSrv"
 
 static void desktop_scene_main_new_idle_animation_callback(void* context) {
@@ -31,34 +34,6 @@ static void desktop_scene_main_interact_animation_callback(void* context) {
     view_dispatcher_send_custom_event(
         desktop->view_dispatcher, DesktopAnimationEventInteractAnimation);
 }
-
-#ifdef APP_ARCHIVE
-static void
-    desktop_switch_to_app(Desktop* desktop, const FlipperInternalApplication* flipper_app) {
-    furi_assert(desktop);
-    furi_assert(flipper_app);
-    furi_assert(flipper_app->app);
-    furi_assert(flipper_app->name);
-
-    if(furi_thread_get_state(desktop->scene_thread) != FuriThreadStateStopped) {
-        FURI_LOG_E("Desktop", "Thread is already running");
-        return;
-    }
-
-    FuriHalRtcHeapTrackMode mode = furi_hal_rtc_get_heap_track_mode();
-    if(mode > FuriHalRtcHeapTrackModeNone) {
-        furi_thread_enable_heap_trace(desktop->scene_thread);
-    } else {
-        furi_thread_disable_heap_trace(desktop->scene_thread);
-    }
-
-    furi_thread_set_name(desktop->scene_thread, flipper_app->name);
-    furi_thread_set_stack_size(desktop->scene_thread, flipper_app->stack_size);
-    furi_thread_set_callback(desktop->scene_thread, flipper_app->app);
-
-    furi_thread_start(desktop->scene_thread);
-}
-#endif
 
 static inline bool desktop_scene_main_check_none(const char* str) {
     return (str[1] == '\0' && str[0] == '?');
@@ -142,9 +117,7 @@ bool desktop_scene_main_on_event(void* context, SceneManagerEvent event) {
             break;
 
         case DesktopMainEventOpenArchive:
-#ifdef APP_ARCHIVE
-            desktop_switch_to_app(desktop, &FLIPPER_ARCHIVE);
-#endif
+            loader_start_detached_with_gui_error(desktop->loader, ARCHIVE_APP_PATH, NULL);
             consumed = true;
             break;
 

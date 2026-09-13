@@ -96,5 +96,10 @@ void archive_favorites_move_mode(ArchiveBrowserView* browser, bool active);
 
 void archive_switch_tab(ArchiveBrowserView* browser, InputKey key);
 void archive_enter_dir(ArchiveBrowserView* browser, FuriString* name);
+
+/** Open @p tab with @p target selected, where target is the path of an item that
+ * was selected when Archive last closed. A folder tab reopens in target's folder.
+ * Falls back to the tab's home, or to the default tab, if the item is gone. */
+void archive_restore_location(ArchiveBrowserView* browser, ArchiveTabEnum tab, const char* target);
 void archive_leave_dir(ArchiveBrowserView* browser);
 void archive_refresh_dir(ArchiveBrowserView* browser);

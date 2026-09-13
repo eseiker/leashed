@@ -1,6 +1,7 @@
 import os
 import struct
 from dataclasses import dataclass, field
+from enum import IntFlag
 
 from flipper.assets.icon import file2image
 
@@ -27,21 +28,34 @@ class ElfManifestBaseHeader:
         )
 
 
+class ElfManifestFlag(IntFlag):
+    # Bit positions match the Momentum and Moon forks so a .fap built for
+    # either is understood here. Only ForceXIP changes this firmware's
+    # behaviour; the rest are carried and ignored.
+    Default = 0
+    InsomniaSafe = 1 << 0
+    ForceXIP = 1 << 1
+
+    UnloadAssetPacks = 1 << 7
+
+
 @dataclass
 class ElfManifestV1:
     stack_size: int
     app_version: int
     name: str = ""
     icon: bytes = field(default=b"")
+    flags: int = ElfManifestFlag.Default
 
     def as_bytes(self):
         return struct.pack(
-            "<hI32s?32s",
+            "<hI32s?32sB",
             self.stack_size,
             self.app_version,
             bytes(self.name.encode("ascii")),
             bool(self.icon),
             self.icon,
+            self.flags,
         )
 
 
@@ -72,11 +86,16 @@ def assemble_manifest_data(
         api_version=sdk_version,
         hardware_target_id=hardware_target,
     ).as_bytes()
+    flags_as_int = ElfManifestFlag.Default
+    for flag in app_manifest.flags:
+        flags_as_int |= ElfManifestFlag[flag]
+
     data += ElfManifestV1(
         stack_size=app_manifest.stack_size,
         app_version=app_version_as_int,
         name=app_manifest.name,
         icon=image_data,
+        flags=flags_as_int,
     ).as_bytes()
 
     return data

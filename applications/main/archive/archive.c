@@ -25,6 +25,7 @@ ArchiveApp* archive_alloc(void) {
     archive->loader = furi_record_open(RECORD_LOADER);
     archive->fav_move_str = furi_string_alloc();
     archive->dst_path = furi_string_alloc();
+    archive->restore_path = furi_string_alloc();
 
     archive->scene_manager = scene_manager_alloc(&archive_scene_handlers, archive);
     archive->view_dispatcher = view_dispatcher_alloc();
@@ -83,6 +84,7 @@ void archive_free(ArchiveApp* archive) {
     browser_free(archive->browser);
     furi_string_free(archive->fav_move_str);
     furi_string_free(archive->dst_path);
+    furi_string_free(archive->restore_path);
 
     furi_record_close(RECORD_DIALOGS);
     archive->dialogs = NULL;
@@ -110,10 +112,26 @@ void archive_show_loading_popup(ArchiveApp* context, bool show) {
     }
 }
 
-int32_t archive_app(void* p) {
-    UNUSED(p);
+/* Launch arguments Archive gives itself when it hands off to another app:
+ * "restore:<tab index>:<path of the item that was selected>". The path may
+ * itself contain ':' (favourites entries start with "/app:"), so only the first
+ * two separators are structural. */
+static void archive_parse_restore_args(ArchiveApp* archive, const char* args) {
+    if(!args || strncmp(args, ARCHIVE_RESTORE_ARGS_PREFIX, strlen(ARCHIVE_RESTORE_ARGS_PREFIX)))
+        return;
+    const char* tab_str = args + strlen(ARCHIVE_RESTORE_ARGS_PREFIX);
+    char* end = NULL;
+    long tab = strtol(tab_str, &end, 10);
+    if(end == tab_str || *end != ':' || tab < 0 || tab >= ArchiveTabTotal) return;
 
+    archive->restore_pending = true;
+    archive->restore_tab = (ArchiveTabEnum)tab;
+    furi_string_set_str(archive->restore_path, end + 1);
+}
+
+int32_t archive_app(void* p) {
     ArchiveApp* archive = archive_alloc();
+    archive_parse_restore_args(archive, (const char*)p);
     view_dispatcher_attach_to_gui(
         archive->view_dispatcher, archive->gui, ViewDispatcherTypeFullscreen);
     // The browser scene reads the favourites and stats every entry before it switches to a view,

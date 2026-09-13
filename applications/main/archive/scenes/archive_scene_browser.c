@@ -52,8 +52,15 @@ static void archive_loader_callback(const void* message, void* context) {
     }
 }
 
-static void archive_run_in_app(ArchiveBrowserView* browser, ArchiveFile_t* selected) {
-    UNUSED(browser);
+/* Archive runs from the SD card as a loader app, so the loader refuses to start a
+ * second app while it is open. Queue the selected app, queue Archive to come back
+ * when that app exits, and close Archive, the same way NFC hands off to another
+ * app. Launch errors are reported by the loader through LoaderDeferredLaunchFlagGui. */
+static void archive_launch(Loader* loader, const char* name, const char* args) {
+    loader_enqueue_launch(loader, name, args, LoaderDeferredLaunchFlagGui);
+}
+
+static void archive_run_in_app(ArchiveApp* archive, ArchiveFile_t* selected) {
     Loader* loader = furi_record_open(RECORD_LOADER);
 
     if(selected->type == ArchiveFileTypeSetting) {
@@ -64,11 +71,10 @@ static void archive_run_in_app(ArchiveBrowserView* browser, ArchiveFile_t* selec
             furi_string_left(app_name, slash);
             FuriString* app_args =
                 furi_string_alloc_set_str(furi_string_get_cstr(app_name) + slash + 1);
-            loader_start_with_gui_error(
-                loader, furi_string_get_cstr(app_name), furi_string_get_cstr(app_args));
+            archive_launch(loader, furi_string_get_cstr(app_name), furi_string_get_cstr(app_args));
             furi_string_free(app_args);
         } else {
-            loader_start_with_gui_error(loader, furi_string_get_cstr(app_name), NULL);
+            archive_launch(loader, furi_string_get_cstr(app_name), NULL);
         }
         furi_string_free(app_name);
     } else {
@@ -79,17 +85,36 @@ static void archive_run_in_app(ArchiveBrowserView* browser, ArchiveFile_t* selec
                 if(param != NULL) {
                     param++;
                 }
-                loader_start_with_gui_error(loader, app_name, param);
+                archive_launch(loader, app_name, param);
             } else {
-                loader_start_with_gui_error(
-                    loader, app_name, furi_string_get_cstr(selected->path));
+                archive_launch(loader, app_name, furi_string_get_cstr(selected->path));
             }
         } else {
-            loader_start_with_gui_error(loader, furi_string_get_cstr(selected->path), NULL);
+            archive_launch(loader, furi_string_get_cstr(selected->path), NULL);
         }
     }
 
+    FuriString* self_path = furi_string_alloc();
+    if(loader_get_application_launch_path(loader, self_path)) {
+        /* Reopen on the same tab with the same item selected. */
+        FuriString* restore_args = furi_string_alloc_printf(
+            ARCHIVE_RESTORE_ARGS_PREFIX "%d:%s",
+            (int)archive_get_tab(archive->browser),
+            furi_string_get_cstr(selected->path));
+        archive_launch(
+            loader, furi_string_get_cstr(self_path), furi_string_get_cstr(restore_args));
+        furi_string_free(restore_args);
+    }
+    furi_string_free(self_path);
+
     furi_record_close(RECORD_LOADER);
+
+    if(archive->loader_stop_subscription) {
+        furi_pubsub_unsubscribe(
+            loader_get_pubsub(archive->loader), archive->loader_stop_subscription);
+        archive->loader_stop_subscription = NULL;
+    }
+    view_dispatcher_stop(archive->view_dispatcher);
 }
 
 void archive_scene_browser_callback(ArchiveBrowserEvent event, void* context) {
@@ -103,7 +128,13 @@ void archive_scene_browser_on_enter(void* context) {
     browser->is_root = true;
 
     archive_browser_set_callback(browser, archive_scene_browser_callback, archive);
-    archive_update_focus(browser, archive->text_store);
+    if(archive->restore_pending) {
+        archive->restore_pending = false;
+        archive_restore_location(
+            browser, archive->restore_tab, furi_string_get_cstr(archive->restore_path));
+    } else {
+        archive_update_focus(browser, archive->text_store);
+    }
     view_dispatcher_switch_to_view(archive->view_dispatcher, ArchiveViewBrowser);
 
     archive->loader_stop_subscription = furi_pubsub_subscribe(
@@ -144,8 +175,8 @@ bool archive_scene_browser_on_event(void* context, SceneManagerEvent event) {
                 archive_show_file_menu(browser, false);
                 archive_enter_dir(browser, selected->path);
             } else if(archive_is_known_app(selected->type)) {
-                archive_run_in_app(browser, selected);
                 archive_show_file_menu(browser, false);
+                archive_run_in_app(archive, selected);
             }
             consumed = true;
             break;

@@ -67,6 +67,11 @@ FlipperApplication*
     return app;
 }
 
+void flipper_application_disable_xip(FlipperApplication* app) {
+    furi_check(app);
+    elf_file_disable_xip(app->elf);
+}
+
 bool flipper_application_is_plugin(FlipperApplication* app) {
     furi_check(app);
     return app->manifest.stack_size == 0;
@@ -130,7 +135,9 @@ static bool flipper_application_process_manifest_section(
     void* context) {
     FlipperApplicationManifest* manifest = context;
 
-    if(size < sizeof(FlipperApplicationManifest)) {
+    // Accept both the upstream manifest and the extended one carrying flags.
+    if(size < sizeof(FlipperApplicationManifestOfw) ||
+       size > sizeof(FlipperApplicationManifestEx)) {
         return false;
     }
 
@@ -138,8 +145,15 @@ static bool flipper_application_process_manifest_section(
         return true;
     }
 
-    return storage_file_seek(file, offset, true) &&
-           storage_file_read(file, manifest, size) == size;
+    bool result = storage_file_seek(file, offset, true) &&
+                  storage_file_read(file, manifest, size) == size;
+
+    // A .fap built without flags gets the default set rather than stack garbage.
+    if(result && size < sizeof(FlipperApplicationManifestEx)) {
+        manifest->flags = FlipperApplicationFlagDefault;
+    }
+
+    return result;
 }
 
 // we can't use const char* as context because we will lose the const qualifier
@@ -170,9 +184,35 @@ static FlipperApplicationPreloadStatus
         return FlipperApplicationPreloadStatusInvalidFile;
     }
 
+    // Load the manifest section first, so its flags are known before the section
+    // table is loaded: that load calls elf_setup_xip(), which needs ForceXIP.
+    if(elf_process_section(
+           app->elf, ".fapmeta", flipper_application_process_manifest_section, &app->manifest) !=
+       ElfProcessSectionResultSuccess) {
+        return FlipperApplicationPreloadStatusInvalidFile;
+    }
+
     // if we are loading full file
     if(load_full) {
-        // load section table
+        /* Plugins are RAM-first like apps: they load into RAM when they fit,
+         * and fall back to the XIP region only when RAM is short.
+         *
+         * The region is single-tenant. If the parent app already holds it,
+         * xip_region_init() refuses the plugin and it loads into RAM, exactly as
+         * it did when plugins were excluded outright. A plugin that sets
+         * ForceXIP, such as a CLI command loaded top-level, skips the RAM check.
+         * Plugins get a smaller RAM margin than apps; see elf_setup_xip(). */
+        if(app->manifest.stack_size == 0) {
+            elf_file_set_xip_plugin(app->elf);
+        }
+
+        /* Force XIP if the app requests it via manifest flag.
+         * Must be set BEFORE loading section table, which calls elf_setup_xip(). */
+        if(app->manifest.flags & FlipperApplicationFlagForceXIP) {
+            elf_file_force_xip(app->elf);
+        }
+
+        // load section table (this calls elf_setup_xip internally)
         ElfLoadSectionTableResult load_result = elf_file_load_section_table(app->elf);
         if(load_result == ElfLoadSectionTableResultError) {
             return FlipperApplicationPreloadStatusInvalidFile;
@@ -193,13 +233,6 @@ static FlipperApplicationPreloadStatus
                &preload_context) == ElfProcessSectionResultCannotProcess) {
             return FlipperApplicationPreloadStatusInvalidFile;
         }
-    }
-
-    // load manifest section
-    if(elf_process_section(
-           app->elf, ".fapmeta", flipper_application_process_manifest_section, &app->manifest) !=
-       ElfProcessSectionResultSuccess) {
-        return FlipperApplicationPreloadStatusInvalidFile;
     }
 
     return flipper_application_validate_manifest(app);

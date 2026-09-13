@@ -112,6 +112,17 @@ void furi_hal_flash_write_dword(size_t address, uint64_t data);
  */
 void furi_hal_flash_program_page(const uint8_t page, const uint8_t* data, uint16_t length);
 
+/** Write block of data to pre-erased flash using fast programming
+ *
+ * @warning locking operation with critical section, stalls execution.
+ *          Flash must be erased before calling this function.
+ *
+ * @param      address  destination address, must be 8-byte aligned
+ * @param      data     source data
+ * @param      length   number of bytes to write (handles non-8-byte-aligned tail)
+ */
+void furi_hal_flash_write_block(size_t address, const uint8_t* data, size_t length);
+
 /** Get flash page number for address
  *
  * @return     page number, -1 for invalid address
@@ -140,6 +151,54 @@ void furi_hal_flash_ob_apply(void);
  * @return     pointer to read-only data of OB (raw + complementary values)
  */
 const FuriHalFlashRawOptionByteData* furi_hal_flash_ob_get_raw_ptr(void);
+
+/** Flush instruction and data caches
+ *
+ * Must be called after writing executable code to flash
+ * to ensure the CPU fetches the updated content.
+ */
+void furi_hal_flash_flush_cache(void);
+
+/** Begin a batch of flash operations.
+ *
+ * Acquires the Core2 mutex and sends a single SHCI_C2_FLASH_EraseActivity(ON)
+ * notification. All subsequent furi_hal_flash_erase / furi_hal_flash_write_block
+ * calls will skip per-operation Core2 locking while the batch is active.
+ *
+ * Must be paired with furi_hal_flash_batch_end().
+ * BLE operations are paused for the duration of the batch.
+ */
+void furi_hal_flash_batch_begin(void);
+
+/** End a batch of flash operations.
+ *
+ * Sends SHCI_C2_FLASH_EraseActivity(OFF) and releases the Core2 mutex.
+ * BLE operations resume after this call.
+ */
+void furi_hal_flash_batch_end(void);
+
+/** Check if a flash batch is currently active.
+ * @return true if between batch_begin and batch_end
+ */
+bool furi_hal_flash_batch_is_active(void);
+
+/** Prevent flash operations while ISR-callable code executes from flash.
+ *
+ * Acquires Core2 mutex and tells BLE stack to defer flash writes.
+ * Use when DMA/timer ISR callbacks execute code from XIP flash —
+ * prevents Core2 flash operations from stalling instruction fetch.
+ *
+ * Safe to call if already protected (no-op).
+ * Must be paired with furi_hal_flash_unprotect_during_execution().
+ */
+void furi_hal_flash_protect_during_execution(void);
+
+/** Resume normal flash operations after ISR-critical section.
+ *
+ * Releases Core2 mutex and tells BLE stack to resume flash writes.
+ * Safe to call if not protected (no-op).
+ */
+void furi_hal_flash_unprotect_during_execution(void);
 
 #ifdef __cplusplus
 }
