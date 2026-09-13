@@ -37,6 +37,22 @@ static const JsModuleDescriptor modules_builtin[] = {
 #endif
 };
 
+/* Modules compiled into js_app (and cli_js) rather than loaded from a .fal, so
+ * their code lives in js_app's XIP flash image instead of the heap. These three
+ * are used by nearly every GUI script; the rest still ship as plugins. Each
+ * entry point is the same symbol the .fal build exported. */
+typedef const FlipperAppPluginDescriptor* (*JsBundledModuleEp)(void);
+
+extern const FlipperAppPluginDescriptor* js_event_loop_ep(void);
+extern const FlipperAppPluginDescriptor* js_gui_ep(void);
+extern const FlipperAppPluginDescriptor* js_view_widget_ep(void);
+
+static const JsBundledModuleEp modules_bundled[] = {
+    js_event_loop_ep,
+    js_gui_ep,
+    js_view_widget_ep,
+};
+
 struct JsModules {
     struct mjs* mjs;
     JsModuleArray_t modules;
@@ -112,6 +128,33 @@ mjs_val_t js_module_require(JsModules* modules, const char* name, size_t name_le
             FURI_LOG_I(TAG, "Using built-in module %s", name);
             break;
         }
+    }
+
+    // Bundled modules (compiled into js_app; resolved by descriptor name, which
+    // uses "__" for the path separator, like the .fal names).
+    if(!module_found) {
+        FuriString* deslashed_name = furi_string_alloc_set_str(name);
+        furi_string_replace_all_str(deslashed_name, "/", "__");
+        for(size_t i = 0; i < COUNT_OF(modules_bundled); i++) {
+            const FlipperAppPluginDescriptor* descriptor = modules_bundled[i]();
+            const JsModuleDescriptor* mod = descriptor->entry_point;
+            if(furi_string_cmp_str(deslashed_name, mod->name) != 0) {
+                continue;
+            }
+            JsModuleData module = {
+                .create = mod->create,
+                .destroy = mod->destroy,
+                .name = furi_string_alloc_set_str(name),
+            };
+            JsModuleArray_push_at(modules->modules, 0, module);
+            if(mod->api_interface) {
+                composite_api_resolver_add(modules->resolver, mod->api_interface);
+            }
+            module_found = true;
+            FURI_LOG_I(TAG, "Using bundled module %s", name);
+            break;
+        }
+        furi_string_free(deslashed_name);
     }
 
     // External module load
