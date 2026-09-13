@@ -75,7 +75,7 @@ static DialogMessageButton compliance_screen(DialogsApp* dialogs, DialogMessage*
 static DialogMessageButton unleashed_info_screen(DialogsApp* dialogs, DialogMessage* message) {
     DialogMessageButton result;
 
-    const char* screen_header = "Unleashed Firmware\n";
+    const char* screen_header = "Moonleashed Firmware\n";
 
     const char* screen_text = "Is for experimental purposes\nonly "
                               "and is not meant for any\nillegal use! "

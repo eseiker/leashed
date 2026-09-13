@@ -199,8 +199,8 @@ vars.AddVariables(
     ),
     (
         "UPDATE_SPLASH",
-        "Directory name with slideshow frames to render after installing update package",
-        "update_default",
+        "Directory name with slideshow frames to render after installing update package; empty for none",
+        "",
     ),
     (
         "LOADER_AUTOSTART",
