@@ -1,40 +1,45 @@
-name: Sync upstream release (JS-on-SD variant)
+name: Sync upstream release (Moonleashed)
 
-# Rebases feat/js-sd-mjs and feat/ble-full-ll-only-hci onto each new upstream
-# unlshd-* release, rebuilds the BLE Full package, and publishes it as a
-# release on this fork. Runs on a daily schedule; the "check" job is a
-# cheap no-op when upstream has not released anything new.
+# Merges each new upstream Unleashed release into main, rebuilds the BLE Full
+# package, and publishes it as a release on this fork. Runs on a daily schedule;
+# the "check" job is a cheap no-op when upstream has not released anything new.
 #
-# Background: DarkFlippers/unleashed-firmware#1144 asked upstream to take an
-# SD-resident MJS runtime; the maintainers declined it for the main tree
-# (even as a branch), so it lives here instead, kept current against every
-# release.
+# Branch layout:
+#  - `main` is the fork. It started from upstream `dev`, carries the Moonleashed
+#    changes (SD-resident JS, XIP, Sub-GHz and Archive on the SD card, BLE Full
+#    raw HCI mode, no update slideshow), and takes each upstream release by
+#    merge. History is never rewritten, so nothing here force-pushes main.
+#  - `release` is an exact, unmodified mirror of upstream's `release` branch.
+#    Its tip is what "have we already synced this release" is judged against.
+#    Never add commits to `release`.
+#  - `feat/js-sd-mjs` is frozen. It is the branch linked from the declined
+#    upstream RFC, DarkFlippers/unleashed-firmware#1144, and is not synced.
 #
-# Design notes:
-#  - `release` and `dev` on this fork are kept exact, unmodified mirrors of
-#    upstream's branches of the same name. Their tips are what "have we
-#    already synced this release" is judged against, and
-#    merge-base(feat/js-sd-mjs, release) recovers the exact commit the JS
-#    branch was last rebased onto, so no separate state file is needed.
-#    Never add commits to `release` or `dev` here.
-#  - This workflow itself lives on `ci`, a third branch carrying nothing but
-#    this file on top of upstream `dev` (so the schedule trigger has a
-#    default branch to run from without turning `dev` into something other
-#    than a plain mirror). Each sync cycle also rebases `ci`'s one commit
-#    onto the latest upstream `dev`, so it never just sits frozen at
-#    whatever `dev` looked like when this was set up.
+# What gets merged: each upstream release tip is "Merge branch 'dev' into
+# release". When its files are identical to that merged dev commit, this merges
+# the dev commit, so main stays on dev's line of history; otherwise, when
+# upstream committed on release directly, it merges release itself.
+#
+# API version: upstream bumps targets/f7/api_symbols.csv every release, so the
+# Version line conflicts. The fork's rule is upstream's version with the minor
+# number plus one. This workflow applies that rule after every merge and resolves
+# a conflict confined to Version lines; any other conflict fails the run with
+# nothing pushed.
+#
+# Token: a merge that brings in upstream edits to .github/workflows is a push
+# GitHub refuses from the built-in GITHUB_TOKEN. Upstream edits its workflows in
+# most releases. Add a repository secret named SYNC_TOKEN holding a token that
+# can push workflow changes: a fine-grained token for this repository with
+# Contents and Workflows set to read and write, or a classic token with the repo
+# and workflow scopes. Without it, such a push fails with a message saying so.
+#
+# Other notes:
 #  - Nothing here hardcodes this repository's own name (only the upstream URL
-#    it syncs from), so renaming the repo does not break it. GitHub already
-#    disables scheduled workflows in forks unless they are enabled by hand,
-#    so no `github.repository == ...` guard is needed either.
-#  - A failed rebase or failed build aborts before anything is pushed, so a
-#    bad upstream change never clobbers a known-good branch. Watch the
-#    Actions tab (or the run's failure notification) for red runs; a failed
-#    rebase needs a manual `git rebase --onto` and a force-push to resolve.
-#  - The BLE Full build reproduces what the JS-on-SD proof of concept
-#    measured: MJS linked into js_app.fap and cli_js.fal instead of
-#    firmware, ~39 KB of CPU1 flash back, ~40 KB less script heap at
-#    runtime. See the fork's AGENTS.md for the full history.
+#    it syncs from), so renaming the repository does not break it. GitHub
+#    already disables scheduled workflows in forks unless enabled by hand, so
+#    no `github.repository == ...` guard is needed either.
+#  - A failed merge, check or build aborts before anything is pushed. A code
+#    conflict needs a manual merge of the same target, then a normal push.
 
 on:
   schedule:
@@ -42,7 +47,7 @@ on:
   workflow_dispatch:
     inputs:
       force_rebuild:
-        description: "Rebuild even if already in sync with upstream release"
+        description: "Rebuild and republish even if already in sync with upstream release"
         type: boolean
         default: false
 
@@ -55,6 +60,7 @@ concurrency:
 
 env:
   UPSTREAM_URL: https://github.com/DarkFlippers/unleashed-firmware.git
+  API_CSV: targets/f7/api_symbols.csv
 
 jobs:
   check:
@@ -62,21 +68,16 @@ jobs:
     outputs:
       new_release: ${{ steps.compare.outputs.new_release }}
       new_tag: ${{ steps.compare.outputs.new_tag }}
-      old_release: ${{ steps.compare.outputs.old_release }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Fetch upstream release and our own branches
+      - name: Fetch upstream release and our mirror of it
         run: |
           git remote add upstream "$UPSTREAM_URL"
           git fetch upstream +refs/heads/release:refs/remotes/upstream/release --tags --quiet
-          git fetch origin \
-            +refs/heads/release:refs/remotes/origin/release \
-            +refs/heads/feat/js-sd-mjs:refs/remotes/origin/feat/js-sd-mjs \
-            +refs/heads/feat/ble-full-ll-only-hci:refs/remotes/origin/feat/ble-full-ll-only-hci \
-            --quiet
+          git fetch origin +refs/heads/release:refs/remotes/origin/release --quiet
 
       - name: Compare upstream release to our mirror
         id: compare
@@ -84,7 +85,6 @@ jobs:
           UPSTREAM_TIP="$(git rev-parse upstream/release)"
           OLD_RELEASE="$(git rev-parse origin/release)"
           NEW_TAG="$(git tag -l 'unlshd-*' --sort=-creatordate --points-at "$UPSTREAM_TIP" | head -1)"
-          echo "old_release=$OLD_RELEASE" >> "$GITHUB_OUTPUT"
           echo "new_tag=${NEW_TAG:-$UPSTREAM_TIP}" >> "$GITHUB_OUTPUT"
           if [ "$UPSTREAM_TIP" = "$OLD_RELEASE" ] && [ "${{ inputs.force_rebuild }}" != "true" ]; then
             echo "No new upstream release; fork's release mirror already at $UPSTREAM_TIP."
@@ -94,7 +94,7 @@ jobs:
             echo "new_release=true" >> "$GITHUB_OUTPUT"
           fi
 
-  rebase-and-build:
+  merge-and-build:
     needs: check
     if: needs.check.outputs.new_release == 'true'
     runs-on: ubuntu-latest
@@ -103,69 +103,104 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main
+          # The pushes below go out with whatever token checkout persists.
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
 
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Fetch upstream release/dev and our own branches
+      - name: Fetch upstream release
         run: |
           git remote add upstream "$UPSTREAM_URL"
-          git fetch upstream \
-            +refs/heads/release:refs/remotes/upstream/release \
-            +refs/heads/dev:refs/remotes/upstream/dev \
-            --tags --quiet
-          git fetch origin \
-            +refs/heads/release:refs/remotes/origin/release \
-            +refs/heads/ci:refs/remotes/origin/ci \
-            +refs/heads/feat/js-sd-mjs:refs/remotes/origin/feat/js-sd-mjs \
-            +refs/heads/feat/ble-full-ll-only-hci:refs/remotes/origin/feat/ble-full-ll-only-hci \
-            --quiet
+          git fetch upstream +refs/heads/release:refs/remotes/upstream/release --tags --quiet
+          git fetch origin +refs/heads/main:refs/remotes/origin/main --quiet
 
-      - name: Keep ci current with upstream dev
+      - name: Choose what to merge
+        id: target
         run: |
-          OLD_DEV_BASE="$(git merge-base origin/ci upstream/dev)"
-          git checkout -B ci origin/ci
-          if git rebase --onto upstream/dev "$OLD_DEV_BASE" ci; then
-            if [ "$(git rev-parse ci)" != "$(git rev-parse origin/ci)" ]; then
-              git push origin --force-with-lease="ci:origin/ci" ci
-            fi
+          RELEASE="$(git rev-parse upstream/release)"
+          if git rev-parse -q --verify "$RELEASE^2" >/dev/null && git diff --quiet "$RELEASE" "$RELEASE^2"; then
+            TARGET="$(git rev-parse "$RELEASE^2")"
+            echo "Release tip matches its dev parent; merging dev commit $TARGET."
           else
-            git rebase --abort
-            echo "::warning::Could not rebase ci onto the latest upstream/dev (conflict in the workflow file itself?). Leaving ci as-is; this does not block the release sync below."
+            TARGET="$RELEASE"
+            echo "Release carries changes beyond its dev parent; merging release $TARGET."
+          fi
+          echo "commit=$TARGET" >> "$GITHUB_OUTPUT"
+
+      - name: Merge the release into main
+        env:
+          TARGET: ${{ steps.target.outputs.commit }}
+          TAG: ${{ needs.check.outputs.new_tag }}
+        run: |
+          git checkout -B main origin/main
+
+          # The fork's API version: upstream's, with the minor number plus one.
+          UPSTREAM_VERSION="$(git show "$TARGET:$API_CSV" | grep -m1 '^Version,' | cut -d, -f3)"
+          FORK_VERSION="$(echo "$UPSTREAM_VERSION" | awk -F. '{ printf "%d.%d", $1, $2 + 1 }')"
+          echo "Upstream API $UPSTREAM_VERSION, fork API $FORK_VERSION"
+
+          if git merge-base --is-ancestor "$TARGET" main; then
+            echo "main already contains $TARGET; nothing to merge."
+          elif ! git merge --no-ff --no-edit -m "Merge upstream $TAG into main" "$TARGET"; then
+            CONFLICTS="$(git diff --name-only --diff-filter=U)"
+            if [ "$CONFLICTS" != "$API_CSV" ]; then
+              git merge --abort
+              echo "::error::Merging upstream $TAG conflicts beyond the API version line: $(echo $CONFLICTS). Nothing was pushed; merge $TARGET into main by hand."
+              exit 1
+            fi
+            # Resolve conflict blocks that contain nothing but Version lines.
+            # Written as an if-condition: steps run under bash -e, so a bare
+            # failing command would exit before the merge could be aborted.
+            if ! python3 - "$API_CSV" "$FORK_VERSION" <<'PY'
+          import sys
+          path, version = sys.argv[1], sys.argv[2]
+          out, block, in_block = [], [], False
+          for line in open(path):
+              if line.startswith("<<<<<<< "):
+                  in_block, block = True, []
+              elif in_block and line.startswith(">>>>>>> "):
+                  body = [l for l in block if not l.startswith(("=======", "||||||| "))]
+                  if not body or any(not l.startswith("Version,") for l in body):
+                      sys.exit("conflict block is not only the Version line")
+                  out.append(f"Version,+,{version},,\n")
+                  in_block = False
+              elif in_block:
+                  block.append(line)
+              else:
+                  out.append(line)
+          open(path, "w").writelines(out)
+          PY
+            then
+              git merge --abort
+              echo "::error::$API_CSV conflicts in more than the Version line. Nothing was pushed; merge $TARGET into main by hand."
+              exit 1
+            fi
+            git add "$API_CSV"
+            git commit --no-edit
           fi
 
-      - name: Rebase feat/js-sd-mjs onto the new release
-        run: |
-          OLD_RELEASE="${{ needs.check.outputs.old_release }}"
-          git checkout -B feat/js-sd-mjs origin/feat/js-sd-mjs
-          git rebase --onto upstream/release "$OLD_RELEASE" feat/js-sd-mjs || {
-            git rebase --abort
-            echo "::error::feat/js-sd-mjs conflicted rebasing onto the new release. Nothing was pushed; resolve by hand: git rebase --onto origin/release $OLD_RELEASE feat/js-sd-mjs"
-            exit 1
-          }
-
-      - name: Rebase feat/ble-full-ll-only-hci onto the rebased js-sd-mjs
-        run: |
-          OLD_JS_SD_MJS="$(git rev-parse origin/feat/js-sd-mjs)"
-          git checkout -B feat/ble-full-ll-only-hci origin/feat/ble-full-ll-only-hci
-          git rebase --onto feat/js-sd-mjs "$OLD_JS_SD_MJS" feat/ble-full-ll-only-hci || {
-            git rebase --abort
-            echo "::error::feat/ble-full-ll-only-hci conflicted rebasing onto the rebased js-sd-mjs. feat/js-sd-mjs was NOT pushed either, so both branches are untouched; resolve by hand."
-            exit 1
-          }
+          # Apply the version rule even when the merge itself was clean.
+          sed -i "s/^Version,+,[0-9.]*,,/Version,+,$FORK_VERSION,,/" "$API_CSV"
+          if ! git diff --quiet -- "$API_CSV"; then
+            git add "$API_CSV"
+            if git log -1 --format=%P | grep -q ' '; then
+              git commit --amend --no-edit
+            else
+              git commit -m "API: set version to $FORK_VERSION for upstream $TAG"
+            fi
+          fi
 
       - name: Check the JS app-local API table still matches api_symbols.csv
-        run: |
-          git checkout feat/js-sd-mjs
-          python3 scripts/check_js_api_table.py
+        run: python3 scripts/check_js_api_table.py
 
-      - name: Build BLE Full (JS-on-SD)
+      - name: Build BLE Full
         env:
-          DIST_SUFFIX: ${{ needs.check.outputs.new_tag }}-ble-full-js-sd
+          DIST_SUFFIX: ${{ needs.check.outputs.new_tag }}-moonleashed
         run: |
-          git checkout feat/js-sd-mjs
           # Match upstream's own CI scope: only the in-tree Scripts pack, not the
           # separately-maintained prebuilt plugin bundle, so the build is fully
           # reproducible from this repo alone.
@@ -175,17 +210,32 @@ jobs:
             COPRO_STACK_BIN=stm32wb5x_BLE_Stack_full_fw.bin \
             COPRO_STACK_TYPE=ble_full
 
-      - name: Push rebased branches and the release mirror
+      - name: Check every built app and plugin resolves its imports
+        env:
+          DIST_SUFFIX: ${{ needs.check.outputs.new_tag }}-moonleashed
         run: |
-          git push origin --force-with-lease="feat/js-sd-mjs:origin/feat/js-sd-mjs" feat/js-sd-mjs
-          git push origin --force-with-lease="feat/ble-full-ll-only-hci:origin/feat/ble-full-ll-only-hci" feat/ble-full-ll-only-hci
+          # Externalised apps link with imports left undefined; without this,
+          # a missing export only shows up on a device.
+          ./fbt COMPACT=1 DEBUG=0 DIST_SUFFIX="$DIST_SUFFIX" lint_fap_imports
+
+      - name: Push main and the release mirror
+        run: |
+          # The build step deleted prebuilt resource packs from the checkout;
+          # restore them so nothing but the merge is pushed.
+          git checkout -- applications/main/extra_resources 2>/dev/null || true
+          if [ "$(git rev-parse main)" != "$(git rev-parse origin/main)" ]; then
+            git push origin main || {
+              echo "::error::Pushing main was refused. If the message mentions workflow permission, upstream changed .github/workflows in this release: add a SYNC_TOKEN secret that can push workflow changes (see the top of this file). Nothing was pushed."
+              exit 1
+            }
+          fi
           git push origin upstream/release:refs/heads/release
 
       - name: Publish a GitHub Release with the build
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ needs.check.outputs.new_tag }}-js-sd"
+          TAG="${{ needs.check.outputs.new_tag }}-moonleashed"
           # Regular files only: dist/f7-C also holds the unpacked f7-update-*
           # directory, and gh cannot upload a directory as an asset. Its
           # contents ship anyway inside flipper-z-f7-update-*.tgz.
@@ -204,7 +254,8 @@ jobs:
           else
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
+              --target main \
               --title "$TAG" \
-              --notes "Automated JS-on-SD build (MJS linked into js_app.fap and cli_js.fal instead of firmware) rebased onto upstream ${{ needs.check.outputs.new_tag }}. Background: https://github.com/DarkFlippers/unleashed-firmware/issues/1144." \
+              --notes "Moonleashed BLE Full build, with upstream Unleashed ${{ needs.check.outputs.new_tag }} merged in. Flash the update package; it includes the BLE Full radio stack." \
               "${ASSETS[@]}"
           fi
