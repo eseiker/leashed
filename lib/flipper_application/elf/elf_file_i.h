@@ -57,6 +57,9 @@ struct ELFFile {
     bool xip_forced;   /**< When true, always use XIP even if app fits in RAM */
     bool xip_plugin;   /**< When true, use the small plugin margin in the RAM-first check */
 
+    ElfFlashGuard flash_guard_cb; /**< Optional guard around XIP flash writes (see ElfFlashGuard). */
+    void* flash_guard_ctx;
+
     ELFSection* preinit_array;
     ELFSection* init_array;
     ELFSection* fini_array;

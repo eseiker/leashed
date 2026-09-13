@@ -1,5 +1,5 @@
 entry,status,name,type,params
-Version,+,88.10,,
+Version,+,88.11,,
 Header,+,applications/drivers/subghz/cc1101_ext/cc1101_ext_interconnect.h,,
 Header,+,applications/services/applications.h,,
 Header,+,applications/services/bt/bt_service/bt.h,,
@@ -1297,6 +1297,7 @@ Function,+,flipper_application_preload,FlipperApplicationPreloadStatus,"FlipperA
 Function,+,flipper_application_preload_manifest,FlipperApplicationPreloadStatus,"FlipperApplication*, const char*"
 Function,+,flipper_application_preload_status_to_string,const char*,FlipperApplicationPreloadStatus
 Function,+,flipper_application_set_assets_progress_callback,void,"FlipperApplication*, FlipperApplicationAssetsProgress, void*"
+Function,+,flipper_application_set_flash_guard,void,"FlipperApplication*, FlipperApplicationFlashGuard, void*"
 Function,+,flipper_format_buffered_file_alloc,FlipperFormat*,Storage*
 Function,+,flipper_format_buffered_file_close,_Bool,FlipperFormat*
 Function,+,flipper_format_buffered_file_open_always,_Bool,"FlipperFormat*, const char*"

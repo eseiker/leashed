@@ -72,6 +72,14 @@ void flipper_application_disable_xip(FlipperApplication* app) {
     elf_file_disable_xip(app->elf);
 }
 
+void flipper_application_set_flash_guard(
+    FlipperApplication* app,
+    FlipperApplicationFlashGuard guard,
+    void* context) {
+    furi_check(app);
+    elf_file_set_flash_guard(app->elf, guard, context);
+}
+
 bool flipper_application_is_plugin(FlipperApplication* app) {
     furi_check(app);
     return app->manifest.stack_size == 0;

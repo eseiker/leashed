@@ -144,6 +144,23 @@ FuriThread* flipper_application_alloc_thread(FlipperApplication* app, const char
  */
 void flipper_application_disable_xip(FlipperApplication* app);
 
+/** Guard invoked around an app's XIP flash writes; matches ElfFlashGuard.
+ * begin=true just before an erase/program, begin=false just after. It is called
+ * only when a write is needed and a BLE link is up; a warm cache launch never
+ * calls it. begin=true returns true to allow the write, false to refuse it. */
+typedef bool (*FlipperApplicationFlashGuard)(void* context, bool begin);
+
+/** Set an optional guard invoked around XIP flash writes. Call after alloc,
+ * before preload. Pass NULL to clear.
+ * @param app
+ * @param guard callback, or NULL
+ * @param context passed to the callback
+ */
+void flipper_application_set_flash_guard(
+    FlipperApplication* app,
+    FlipperApplicationFlashGuard guard,
+    void* context);
+
 /** Check if application is a plugin (not a runnable standalone app)
  * @param app Application pointer
  * @return true if application is a plugin, false otherwise

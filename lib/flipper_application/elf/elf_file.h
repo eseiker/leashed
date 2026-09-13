@@ -13,6 +13,19 @@ extern "C" {
 
 typedef struct ELFFile ELFFile;
 
+/** Optional guard invoked around XIP flash writes.
+ *
+ * The ELF loader calls it with begin=true just before it erases or programs the
+ * XIP flash region, and begin=false just after. A caller that owns the radio can
+ * use it to take a BLE link down before the write and bring it back after, so a
+ * large erase does not drop a live connection. It is called only when a write is
+ * actually needed and a BLE link is up; a warm cache launch never calls it.
+ *
+ * begin=true returns true if the write may proceed, false to refuse it. begin=false
+ * is best-effort and its return is ignored.
+ */
+typedef bool (*ElfFlashGuard)(void* context, bool begin);
+
 typedef struct {
     const char* name;
     uint32_t address;
@@ -63,6 +76,15 @@ ELFFile* elf_file_alloc(Storage* storage, const ElfApiInterface* api_interface);
  * @param elf_file 
  */
 void elf_file_free(ELFFile* elf_file);
+
+/**
+ * @brief Set an optional guard invoked around XIP flash writes.
+ * Call after alloc but before loading. See ElfFlashGuard.
+ * @param elf_file
+ * @param guard callback, or NULL to clear
+ * @param context passed to the callback
+ */
+void elf_file_set_flash_guard(ELFFile* elf_file, ElfFlashGuard guard, void* context);
 
 /**
  * @brief Disable XIP for this ELF instance.

@@ -886,6 +886,8 @@ ELFFile* elf_file_alloc(Storage* storage, const ElfApiInterface* api_interface) 
     elf->xip_disabled = false;
     elf->xip_forced = false;
     elf->xip_plugin = false;
+    elf->flash_guard_cb = NULL;
+    elf->flash_guard_ctx = NULL;
     ELFSectionDict_init(elf->sections);
     AddressCache_init(elf->trampoline_cache);
     elf->init_array_called = false;
@@ -901,6 +903,12 @@ void elf_file_disable_xip(ELFFile* elf) {
 void elf_file_set_xip_plugin(ELFFile* elf) {
     furi_check(elf);
     elf->xip_plugin = true;
+}
+
+void elf_file_set_flash_guard(ELFFile* elf, ElfFlashGuard guard, void* context) {
+    furi_check(elf);
+    elf->flash_guard_cb = guard;
+    elf->flash_guard_ctx = context;
 }
 
 void elf_file_force_xip(ELFFile* elf) {
@@ -1098,17 +1106,10 @@ static void elf_xip_assign_addresses(ELFFile* elf) {
 }
 
 static void elf_setup_xip(ELFFile* elf) {
-    /* Never write flash while a BLE link is up. The erase takes the flash
-     * controller away from CPU2, which drops the connection, and driving the
-     * radio afterwards crashes. Falling back to RAM here means a large app
-     * simply will not load while connected, which is the honest outcome:
-     * XIP and an active connection are mutually exclusive on this hardware. */
-    if(furi_hal_bt_is_connected()) {
-        memset(&elf->xip_region, 0, sizeof(XipRegion));
-        FURI_LOG_W(TAG, "XIP disabled: BLE connected, refusing to erase flash");
-        return;
-    }
-
+    /* A warm XIP cache launch writes no flash, so it is safe with a BLE link up
+     * and is not blocked here. A launch that does need a flash write, and finds a
+     * link up, is handled at the write itself in elf_file_load_sections: it uses
+     * the flash guard to take the link down, or refuses if none is set. */
     if(elf->xip_disabled) {
         memset(&elf->xip_region, 0, sizeof(XipRegion));
         FURI_LOG_D(TAG, "XIP disabled for this ELF");
@@ -1904,6 +1905,27 @@ ELFFileLoadStatus elf_file_load_sections(ELFFile* elf) {
         }
     }
 
+    /* A cold XIP load, or a warm one whose RAM sections moved, erases and programs
+     * flash. That must not happen while a BLE link is up: the erase drops the link
+     * and driving the radio afterwards crashes. If a write is needed and a link is
+     * up, ask the flash guard to take the link down first (it comes back after);
+     * with no guard set, refuse the write and fail the load. The loader service
+     * always sets a guard, so an ordinary app launch blinks the link rather than
+     * failing; the no-guard path only applies to loads that never set one, such
+     * as CLI plugins. A warm cache hit writes nothing and is never affected. */
+    bool xip_will_write = status == ELFFileLoadStatusSuccess && elf->xip_region.active &&
+                          (!elf->xip_region.cache_valid || elf->xip_region.needs_rerelocation);
+    bool flash_guarded = false;
+    if(xip_will_write && furi_hal_bt_is_connected()) {
+        if(elf->flash_guard_cb && elf->flash_guard_cb(elf->flash_guard_ctx, true)) {
+            flash_guarded = true;
+            FURI_LOG_I(TAG, "XIP write: BLE link taken down for the flash write");
+        } else {
+            FURI_LOG_W(TAG, "XIP write needed while BLE connected and no flash guard; refusing");
+            status = ELFFileLoadStatusUnspecifiedError;
+        }
+    }
+
     /* Phase 1b + 2: XIP section processing.
      * If cache is valid and addresses match, skip entirely.
      * If cache is valid but RAM addrs changed, patch in place (selective flash writes).
@@ -2086,6 +2108,11 @@ ELFFileLoadStatus elf_file_load_sections(ELFFile* elf) {
 
         /* End batch — resume BLE operations */
         furi_hal_flash_batch_end();
+    }
+
+    if(flash_guarded) {
+        elf->flash_guard_cb(elf->flash_guard_ctx, false);
+        FURI_LOG_I(TAG, "XIP write done: BLE link resumed");
     }
 
     /* Phase 3: Fix up entry point */
