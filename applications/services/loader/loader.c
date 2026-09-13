@@ -4,6 +4,7 @@
 #include <storage/storage.h>
 #include <furi_hal.h>
 #include <furi_hal_bt.h>
+#include <bt/bt_service/bt.h>
 #include <assets_icons.h>
 
 #include <dialogs/dialogs.h>
@@ -39,6 +40,19 @@ static const char* loader_find_external_application_by_name(const char* app_name
 }
 
 // API
+
+/* XIP flash guard for app launches (see flipper_application_set_flash_guard).
+ * The ELF loader calls this only when it must erase or program the XIP flash
+ * region and a BLE link is up. Suspending the BT profile closes the connection
+ * and frees the radio, so the erase cannot drop a live link; resuming restarts
+ * advertising and the peer reconnects. Bonding keys persist, so no re-pairing. */
+static bool loader_xip_flash_guard(void* context, bool begin) {
+    UNUSED(context);
+    Bt* bt = furi_record_open(RECORD_BT);
+    bool ok = begin ? bt_profile_suspend(bt) : bt_profile_resume_default(bt);
+    furi_record_close(RECORD_BT);
+    return ok;
+}
 
 static LoaderMessageLoaderStatusResult loader_start_internal(
     Loader* loader,
@@ -572,6 +586,10 @@ static LoaderMessageLoaderStatusResult loader_start_external_app(
 
     do {
         loader->app.fap = flipper_application_alloc(storage, firmware_api_interface);
+        /* Let a launch that must write the XIP flash region proceed even with a
+         * BLE link up: the guard takes the link down for the write and brings it
+         * back after. A warm cache launch writes nothing and never calls it. */
+        flipper_application_set_flash_guard(loader->app.fap, loader_xip_flash_guard, NULL);
         size_t start = furi_get_tick();
 
         FURI_LOG_I(TAG, "Loading %s", path);
