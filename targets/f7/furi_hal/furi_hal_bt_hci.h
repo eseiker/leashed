@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define FURI_HAL_BT_HCI_ABI 2U
+#define FURI_HAL_BT_HCI_ABI       2U
 #define FURI_HAL_BT_HCI_FRAME_MAX 260U
 
 #ifdef __cplusplus
